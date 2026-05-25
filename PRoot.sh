@@ -14,10 +14,12 @@ set -e
 ############################
 
 ROOTFS_DIR="$(pwd)/ubuntu-fs"
+LOCAL_BIN="$(pwd)/.bin"
 MAX_RETRIES=5
 TIMEOUT=10
 
-export PATH="$PATH:$HOME/.local/usr/bin"
+# Force the script to see our locally downloaded binaries
+export PATH="$LOCAL_BIN:$PATH:$HOME/.local/usr/bin"
 export PROOT_NO_SECCOMP=1 
 
 ############################
@@ -93,12 +95,25 @@ security_check() {
 
 verify_environment() {
     echo -e "${CYAN}[*] Verifying injection binaries (wget, proot, tar)...${RESET}"
-    
-    # Ensures basic binaries exist in the host layer without invoking package managers
-    if ! command -v wget >/dev/null 2>&1 || ! command -v proot >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
-        echo -e "${RED}[CRITICAL] Base host layer missing required toolsets (wget/proot/tar).${RESET}"
-        echo -e "${YELLOW}[*] Ensure binaries are available in your local path environments.${RESET}"
+    mkdir -p "$LOCAL_BIN"
+
+    # If wget or tar are completely missing on the host, we can't do anything
+    if ! command -v wget >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
+        echo -e "${RED}[CRITICAL] Base host layer missing required toolsets (wget/tar).${RESET}"
         exit 1
+    fi
+
+    # FIX FOR REPLIT: If proot doesn't exist, pull a static unprivileged binary dynamically
+    if ! command -v proot >/dev/null 2>&1 && [ ! -f "$LOCAL_BIN/proot" ]; then
+        echo -e "${YELLOW}[*] 'proot' not found on host. Downloading local runtime engine...${RESET}"
+        
+        # Pulls a reliable, statically compiled PRoot binary from standard gitlab builds
+        wget --no-hsts -O "$LOCAL_BIN/proot" "https://proot.gitlab.io/proot/bin/proot" || {
+            # Fallback mirror if main site has issues
+            wget --no-hsts -O "$LOCAL_BIN/proot" "https://raw.githubusercontent.com/proot-me/proot/master/src/proot"
+        }
+        chmod +x "$LOCAL_BIN/proot"
+        echo -e "${GREEN}[+] Local runtime engine loaded successfully.${RESET}"
     fi
 }
 
@@ -129,7 +144,6 @@ run_hacker_sequence() {
     echo -e "${GREEN}[+] Memory allocations stabilized. Triggering shell cascade...${RESET}"
     sleep 0.8
     
-    # Rapid hexadecimal and binary matrix visual sequences
     for i in $(seq 1 60); do
         case $((i % 5)) in
             0) COLOR=$GREEN ;;
@@ -139,9 +153,9 @@ run_hacker_sequence() {
             *) COLOR=$YELLOW ;;
         esac
         
-        HEX_CHUNK_1=$(cat /dev/urandom | tr -dc 'A-F0-9' | head -c 16 || echo "7F494E4A01010100")
-        HEX_CHUNK_2=$(cat /dev/urandom | tr -dc 'A-F0-9' | head -c 16 || echo "0000000000000000")
-        BIN_CHUNK=$(cat /dev/urandom | tr -dc '01' | head -c 24 || echo "110100101110")
+        HEX_CHUNK_1=$(cat /dev/urandom | tr -dc 'A-F0-9' | head -c 16 2>/dev/null || echo "7F494E4A01010100")
+        HEX_CHUNK_2=$(cat /dev/urandom | tr -dc 'A-F0-9' | head -c 16 2>/dev/null || echo "0000000000000000")
+        BIN_CHUNK=$(cat /dev/urandom | tr -dc '01' | head -c 24 2>/dev/null || echo "110100101110")
         
         echo -e "${COLOR}STACK_PTR_0x${i}A7B8F9 :: [${HEX_CHUNK_1}:${HEX_CHUNK_2}] :: REG_OVRD_HI_${BIN_CHUNK}${RESET}"
         usleep 25000 2>/dev/null || sleep 0.02
@@ -167,14 +181,13 @@ configure_network_layer() {
     echo "nameserver 1.1.1.1" > "$ROOTFS_DIR/etc/resolv.conf"
     echo "nameserver 8.8.8.8" >> "$ROOTFS_DIR/etc/resolv.conf"
     
-    # Boot hook within container to present a hacker welcome prompt upon entry
     cat > "$ROOTFS_DIR/root/.first_run.sh" << 'EOF'
 #!/bin/bash
 clear
 echo -e "\033[1;31m=====================================================\033[0m"
 echo -e "\033[1;32m      ANYACTOR EXPLOIT TERMINAL FRAMEWORK ONLINE     \033[0m"
 echo -e "\033[1;31m=====================================================\033[0m"
-echo -e "\033[1;36m SYSTEM BOUNDARIES BYPASSED. USER ROOT ROOT PRIVILEGES UNLOCKED.\033[0m"
+echo -e "\033[1;36m SYSTEM BOUNDARIES BYPASSED. USER ROOT PRIVILEGES UNLOCKED.\033[0m"
 echo ""
 exec /bin/bash --login
 EOF
@@ -202,7 +215,7 @@ show_terminal_metrics() {
 }
 
 ############################
-# METASPLOIT CONTROL EXECUTION
+# CONTROL EXECUTION
 ############################
 
 show_logo
@@ -222,7 +235,10 @@ show_terminal_metrics
 # ENGINE COUPLING (PRoot)
 ############################
 
-exec proot \
+# Dynamically targets whichever proot binary is available (system or local fallback)
+PROOT_BIN=$(command -v proot || echo "$LOCAL_BIN/proot")
+
+exec "$PROOT_BIN" \
     --rootfs="$ROOTFS_DIR" \
     -0 \
     -w /root \
