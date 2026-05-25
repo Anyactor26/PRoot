@@ -18,3 +18,4 @@ A fast, highly optimized, lightweight, and modern script to deploy an isolated *
 
 1. **Make it Executable:**
  
+```bash <(curl -fsSL https://raw.githubusercontent.com/Anyactor26/PRoot/main/PRoot.sh)```
